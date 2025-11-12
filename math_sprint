@@ -1,0 +1,173 @@
+"""
+Math Sprint - aplikacja webowa (Python + Streamlit)
+
+Instrukcja lokalna:
+1. Zainstaluj Python 3.9+.
+2. Zainstaluj Streamlit i Pandas:
+   pip install -r requirements.txt
+3. Uruchom lokalnie:
+   streamlit run math_sprint.py
+
+Instrukcja wdrożenia online (Streamlit Cloud):
+1. Wejdź na https://share.streamlit.io
+2. Zaloguj się kontem GitHub.
+3. Utwórz nowe repozytorium na GitHub i dodaj do niego dwa pliki:
+   - math_sprint.py (ten plik)
+   - requirements.txt (zawartość poniżej)
+4. Wybierz "New app" → wskaż repozytorium i plik `math_sprint.py`.
+5. Kliknij "Deploy" — aplikacja będzie dostępna publicznie pod własnym linkiem.
+
+Plik requirements.txt:
+----------------------
+streamlit
+pandas
+----------------------
+
+Opis działania:
+- Uczeń wpisuje imię i zaczyna grę.
+- Pojawiają się działania: dodawanie, odejmowanie, mnożenie, dzielenie.
+- Ma 5 sekund na każdą odpowiedź.
+- Jeśli poda dobrą odpowiedź w czasie, dostaje punkty i pojawia się trudniejsze zadanie.
+- Gra trwa, dopóki odpowiada poprawnie.
+- Wyniki zapisywane są do pliku CSV (ranking publiczny).
+- Ranking pokazuje sumę punktów i najlepszy wynik ucznia.
+"""
+
+import streamlit as st
+import pandas as pd
+import random
+import time
+import os
+
+# --- Ustawienia ---
+DATA_FILE = "ranking.csv"
+TIME_LIMIT = 5  # sekundy
+
+# --- Funkcje pomocnicze ---
+def generate_problem(level: int):
+    max_base = min(10 + int(level * 1.5), 200)
+    op = random.choice(["+", "-", "*", "/"])
+    a = random.randint(1, max_base)
+    b = random.randint(1, max(1, max_base // (4 if op == '*' else 2)))
+
+    if op == "/":
+        result = random.randint(1, min(12, int(level / 2 + 3)))
+        divisor = b
+        dividend = result * divisor
+        text = f"{dividend} / {divisor}"
+        return text, result
+    elif op == "+":
+        return f"{a} + {b}", a + b
+    elif op == "-":
+        return f"{a} - {b}", a - b
+    else:
+        return f"{a} * {b}", a * b
+
+
+def load_ranking():
+    if not os.path.exists(DATA_FILE):
+        return pd.DataFrame(columns=["name", "score"])
+    return pd.read_csv(DATA_FILE)
+
+
+def save_score(name: str, score: int):
+    df = load_ranking()
+    new_row = pd.DataFrame([[name, score]], columns=["name", "score"])
+    df = pd.concat([df, new_row], ignore_index=True)
+    df.to_csv(DATA_FILE, index=False)
+
+
+def build_leaderboard(df: pd.DataFrame):
+    if df.empty:
+        return pd.DataFrame(columns=["Uczeń", "Suma punktów", "Najlepsza sesja", "Sesje"])
+    grouped = df.groupby("name").agg(
+        Suma_punktów=("score", "sum"),
+        Najlepsza_sesja=("score", "max"),
+        Sesje=("score", "count"),
+    ).reset_index().rename(columns={"name": "Uczeń"})
+    grouped = grouped.sort_values(by=["Suma_punktów", "Najlepsza_sesja"], ascending=False)
+    return grouped
+
+# --- UI ---
+st.set_page_config(page_title="Math Sprint", layout="wide")
+st.title("🧮 Math Sprint — gra matematyczna")
+st.write("Odpowiadaj poprawnie w 5 sekund — gra trwa, dopóki nie popełnisz błędu.")
+
+col1, col2 = st.columns([2, 1])
+
+with col1:
+    name = st.text_input("Twoje imię (widoczne w rankingu)", key="name")
+    if "game_state" not in st.session_state:
+        st.session_state.game_state = "ready"  # ready, playing, ended
+        st.session_state.level = 1
+        st.session_state.score = 0
+        st.session_state.problem = None
+        st.session_state.answer = None
+        st.session_state.start_time = None
+
+    def start_game():
+        if not name.strip():
+            st.warning("Wpisz imię, aby rozpocząć grę!")
+            return
+        st.session_state.game_state = "playing"
+        st.session_state.level = 1
+        st.session_state.score = 0
+        problem, ans = generate_problem(1)
+        st.session_state.problem = problem
+        st.session_state.answer = ans
+        st.session_state.start_time = time.time()
+
+    def end_game():
+        st.session_state.game_state = "ended"
+        save_score(name.strip(), st.session_state.score)
+
+    if st.session_state.game_state == "ready":
+        if st.button("▶️ Start gry"):
+            start_game()
+
+    elif st.session_state.game_state == "playing":
+        elapsed = time.time() - st.session_state.start_time
+        remaining = TIME_LIMIT - elapsed
+
+        if remaining <= 0:
+            st.error(f"⏰ Czas minął! Twój wynik: {st.session_state.score} pkt.")
+            end_game()
+        else:
+            st.metric("Pozostały czas", f"{remaining:.1f}s")
+            st.subheader(f"Zadanie: {st.session_state.problem}")
+            user_input = st.text_input("Wpisz odpowiedź i naciśnij Enter:", key="answer_input")
+            if user_input:
+                try:
+                    val = float(user_input)
+                    if abs(val - st.session_state.answer) < 1e-6:
+                        st.success("✅ Poprawna odpowiedź!")
+                        st.session_state.score += max(1, st.session_state.level // 2 + 1)
+                        st.session_state.level += 1
+                        problem, ans = generate_problem(st.session_state.level)
+                        st.session_state.problem = problem
+                        st.session_state.answer = ans
+                        st.session_state.start_time = time.time()
+                        st.experimental_rerun()
+                    else:
+                        st.error(f"❌ Błędna odpowiedź! Twój wynik: {st.session_state.score} pkt.")
+                        end_game()
+                except ValueError:
+                    st.warning("Podaj liczbę.")
+
+        st.write(f"**Poziom:** {st.session_state.level} | **Wynik:** {st.session_state.score}")
+        if st.button("🏳️ Poddaj się"):
+            st.warning(f"Koniec gry! Twój wynik: {st.session_state.score} pkt.")
+            end_game()
+
+    elif st.session_state.game_state == "ended":
+        st.success(f"Koniec gry! Twój wynik: {st.session_state.score} pkt.")
+        if st.button("🔁 Zagraj ponownie"):
+            st.session_state.game_state = "ready"
+            st.experimental_rerun()
+
+with col2:
+    st.subheader("🏆 Ranking publiczny")
+    df = load_ranking()
+    leaderboard = build_leaderboard(df)
+    st.dataframe(leaderboard, use_container_width=True)
+    st.caption("Ranking pokazuje sumę punktów oraz najlepszy wynik każdej osoby.")
