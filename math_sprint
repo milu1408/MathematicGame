@@ -1,38 +1,3 @@
-"""
-Math Sprint - aplikacja webowa (Python + Streamlit)
-
-Instrukcja lokalna:
-1. Zainstaluj Python 3.9+.
-2. Zainstaluj Streamlit i Pandas:
-   pip install -r requirements.txt
-3. Uruchom lokalnie:
-   streamlit run math_sprint.py
-
-Instrukcja wdrożenia online (Streamlit Cloud):
-1. Wejdź na https://share.streamlit.io
-2. Zaloguj się kontem GitHub.
-3. Utwórz nowe repozytorium na GitHub i dodaj do niego dwa pliki:
-   - math_sprint.py (ten plik)
-   - requirements.txt (zawartość poniżej)
-4. Wybierz "New app" → wskaż repozytorium i plik `math_sprint.py`.
-5. Kliknij "Deploy" — aplikacja będzie dostępna publicznie pod własnym linkiem.
-
-Plik requirements.txt:
-----------------------
-streamlit
-pandas
-----------------------
-
-Opis działania:
-- Uczeń wpisuje imię i zaczyna grę.
-- Pojawiają się działania: dodawanie, odejmowanie, mnożenie, dzielenie.
-- Ma 5 sekund na każdą odpowiedź.
-- Jeśli poda dobrą odpowiedź w czasie, dostaje punkty i pojawia się trudniejsze zadanie.
-- Gra trwa, dopóki odpowiada poprawnie.
-- Wyniki zapisywane są do pliku CSV (ranking publiczny).
-- Ranking pokazuje sumę punktów i najlepszy wynik ucznia.
-"""
-
 import streamlit as st
 import pandas as pd
 import random
@@ -65,9 +30,12 @@ def generate_problem(level: int):
 
 
 def load_ranking():
-    if not os.path.exists(DATA_FILE):
+    if not os.path.exists(DATA_FILE) or os.path.getsize(DATA_FILE) == 0:
         return pd.DataFrame(columns=["name", "score"])
-    return pd.read_csv(DATA_FILE)
+    try:
+        return pd.read_csv(DATA_FILE)
+    except Exception:
+        return pd.DataFrame(columns=["name", "score"])
 
 
 def save_score(name: str, score: int):
@@ -85,8 +53,11 @@ def build_leaderboard(df: pd.DataFrame):
         Najlepsza_sesja=("score", "max"),
         Sesje=("score", "count"),
     ).reset_index().rename(columns={"name": "Uczeń"})
-    grouped = grouped.sort_values(by=["Suma_punktów", "Najlepsza_sesja"], ascending=False)
+    grouped = grouped.sort_values(
+        by=["Suma_punktów", "Najlepsza_sesja"], ascending=False
+    ).reset_index(drop=True)
     return grouped
+
 
 # --- UI ---
 st.set_page_config(page_title="Math Sprint", layout="wide")
@@ -97,6 +68,8 @@ col1, col2 = st.columns([2, 1])
 
 with col1:
     name = st.text_input("Twoje imię (widoczne w rankingu)", key="name")
+
+    # Inicjalizacja stanu gry
     if "game_state" not in st.session_state:
         st.session_state.game_state = "ready"  # ready, playing, ended
         st.session_state.level = 1
@@ -109,6 +82,9 @@ with col1:
         if not name.strip():
             st.warning("Wpisz imię, aby rozpocząć grę!")
             return
+        if "," in name:
+            st.warning("Nie używaj przecinków w imieniu.")
+            return
         st.session_state.game_state = "playing"
         st.session_state.level = 1
         st.session_state.score = 0
@@ -119,8 +95,10 @@ with col1:
 
     def end_game():
         st.session_state.game_state = "ended"
-        save_score(name.strip(), st.session_state.score)
+        if name.strip():
+            save_score(name.strip(), st.session_state.score)
 
+    # --- Logika gry ---
     if st.session_state.game_state == "ready":
         if st.button("▶️ Start gry"):
             start_game()
@@ -147,7 +125,7 @@ with col1:
                         st.session_state.problem = problem
                         st.session_state.answer = ans
                         st.session_state.start_time = time.time()
-                        st.experimental_rerun()
+                        st.rerun()
                     else:
                         st.error(f"❌ Błędna odpowiedź! Twój wynik: {st.session_state.score} pkt.")
                         end_game()
@@ -163,7 +141,7 @@ with col1:
         st.success(f"Koniec gry! Twój wynik: {st.session_state.score} pkt.")
         if st.button("🔁 Zagraj ponownie"):
             st.session_state.game_state = "ready"
-            st.experimental_rerun()
+            st.rerun()
 
 with col2:
     st.subheader("🏆 Ranking publiczny")
